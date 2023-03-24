@@ -3,7 +3,6 @@ package model
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.runBlocking
 
 class Duplex : ResourceManager.Connection,
     TransactionManager.Connection {
@@ -22,18 +21,4 @@ class Duplex : ResourceManager.Connection,
     override suspend fun broadcastMessage(msg: TransactionManager.Message) {
         _transactionManagerMessage.emit(msg)
     }
-}
-
-fun main() {
-    println("Starting..")
-    val tm = TransactionManager()
-    val rms = (1..5).map { ResourceManager() }
-    rms.forEach { rm ->
-        val duplex = Duplex()
-        println("Connecting RM to TM")
-        runBlocking { rm.connectTransactionManager(duplex) }
-        println("Connecting TM to RM")
-        runBlocking { tm.connectResourceManager(duplex) }
-    }
-    println("Everything's connected!")
 }
