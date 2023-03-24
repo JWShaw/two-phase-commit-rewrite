@@ -1,8 +1,7 @@
 package model
 
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.launch
 
 class ResourceManager {
 
@@ -11,32 +10,47 @@ class ResourceManager {
         get() = _state
 
     private var transactionManagerConnection: Connection? = null
+    private var listenJob: Job? = null
 
-    suspend fun connectTransactionManager(connection: Connection) = coroutineScope {
+    @OptIn(DelicateCoroutinesApi::class)
+    suspend fun connectTransactionManager(connection: Connection) {
         transactionManagerConnection = connection
-        setState(State.WORKING)
-        launch {
-            connection.transactionManagerMessage.collect { msg ->
-                when (msg) {
-                    TransactionManager.Message.PREPARE -> setState(State.PREPARED)
-                    TransactionManager.Message.COMMIT -> setState(State.COMMITTED)
-                    TransactionManager.Message.ABORT -> setState(State.ABORTED)
+        _state = State.WORKING
+        transactionManagerConnection?.broadcastState(state)
+        listenJob = GlobalScope.launch {
+            try {
+                connection.transactionManagerMessage.collect { msg ->
+                    when (msg) {
+                        TransactionManager.Message.PREPARE -> prepare()
+                        TransactionManager.Message.COMMIT -> commit()
+                        TransactionManager.Message.ABORT -> abort()
+                    }
                 }
+            } finally {
+                listenJob?.cancel()
             }
         }
     }
 
     suspend fun prepare() {
-        if (_state == State.WORKING) setState(State.PREPARED)
+        if (_state == State.WORKING) {
+            _state = State.PREPARED
+            transactionManagerConnection?.broadcastState(state)
+        }
     }
 
     suspend fun abort() {
-        if (_state == State.WORKING || _state == State.PREPARED) setState(State.ABORTED)
+        if (_state == State.WORKING || _state == State.PREPARED) {
+            _state = State.ABORTED
+            transactionManagerConnection?.broadcastState(state)
+            listenJob?.cancel()
+        }
     }
 
-    private suspend fun setState(state: State) {
-        _state = state
+    private suspend fun commit() {
+        _state = State.COMMITTED
         transactionManagerConnection?.broadcastState(state)
+        listenJob?.cancel()
     }
 
     enum class State {

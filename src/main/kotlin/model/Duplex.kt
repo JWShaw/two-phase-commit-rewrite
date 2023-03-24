@@ -28,14 +28,12 @@ fun main() {
     println("Starting..")
     val tm = TransactionManager()
     val rms = (1..5).map { ResourceManager() }
-    val connections = runBlocking {
-        rms.forEach { rm ->
-            val duplex = Duplex()
-            println("Connecting RM")
-            tm.connectResourceManager(duplex)
-            println("Connecting TM")
-            rm.connectTransactionManager(duplex)
-        }
+    rms.forEach { rm ->
+        val duplex = Duplex()
+        println("Connecting RM to TM")
+        runBlocking { rm.connectTransactionManager(duplex) }
+        println("Connecting TM to RM")
+        runBlocking { tm.connectResourceManager(duplex) }
     }
     println("Everything's connected!")
 }

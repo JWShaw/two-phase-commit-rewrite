@@ -1,8 +1,7 @@
 package model
 
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 
 class TransactionManager {
 
@@ -11,18 +10,25 @@ class TransactionManager {
         get() = _state
 
     private val connections = mutableListOf<Connection>()
+    private val jobs = mutableMapOf<Connection, Job>()
 
-    suspend fun connectResourceManager(connection: Connection) = coroutineScope {
+    @OptIn(DelicateCoroutinesApi::class)
+    suspend fun connectResourceManager(connection: Connection) {
         connections.add(connection)
-        launch {
-            connection.resourceManagerState.collect { state ->
-                when (state) {
-                    ResourceManager.State.PREPARED -> prepare()
-                    ResourceManager.State.ABORTED -> abort()
-                    else -> Unit
+        val job = GlobalScope.launch {
+            try {
+                connection.resourceManagerState.collect { state ->
+                    when (state) {
+                        ResourceManager.State.PREPARED -> prepare()
+                        ResourceManager.State.ABORTED -> abort()
+                        else -> Unit
+                    }
                 }
+            } finally {
+                jobs[connection]?.cancel()
             }
         }
+        jobs[connection] = job
     }
 
     suspend fun prepare() {
@@ -40,12 +46,14 @@ class TransactionManager {
         if (_state == State.WORKING || _state == State.PREPARING) {
             _state = State.ABORTED
             connections.forEach { it.broadcastMessage(Message.ABORT) }
+            connections.forEach { jobs[it]?.cancel() }
         }
     }
 
     private suspend fun commit() {
         _state = State.COMMITTED
         connections.forEach { it.broadcastMessage(Message.COMMIT) }
+        connections.forEach { jobs[it]?.cancel() }
     }
 
     enum class State {
