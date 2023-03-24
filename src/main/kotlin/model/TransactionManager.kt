@@ -10,25 +10,21 @@ class TransactionManager {
         get() = _state
 
     private val connections = mutableListOf<Connection>()
-    private val jobs = mutableMapOf<Connection, Job>()
+    private val listenJobs = mutableMapOf<Connection, Job>()
 
     @OptIn(DelicateCoroutinesApi::class)
     suspend fun connectResourceManager(connection: Connection) {
         connections.add(connection)
         val job = GlobalScope.launch {
-            try {
-                connection.resourceManagerState.collect { state ->
-                    when (state) {
-                        ResourceManager.State.PREPARED -> prepare()
-                        ResourceManager.State.ABORTED -> abort()
-                        else -> Unit
-                    }
+            connection.resourceManagerState.collect { state ->
+                when (state) {
+                    ResourceManager.State.PREPARED -> prepare()
+                    ResourceManager.State.ABORTED -> abort()
+                    else -> Unit
                 }
-            } finally {
-                jobs[connection]?.cancel()
             }
         }
-        jobs[connection] = job
+        listenJobs[connection] = job
     }
 
     suspend fun prepare() {
@@ -45,15 +41,19 @@ class TransactionManager {
     suspend fun abort() {
         if (_state == State.WORKING || _state == State.PREPARING) {
             _state = State.ABORTED
-            connections.forEach { it.broadcastMessage(Message.ABORT) }
-            connections.forEach { jobs[it]?.cancel() }
+            connections.forEach {
+                it.broadcastMessage(Message.ABORT)
+                listenJobs[it]?.cancel()
+            }
         }
     }
 
     private suspend fun commit() {
         _state = State.COMMITTED
-        connections.forEach { it.broadcastMessage(Message.COMMIT) }
-        connections.forEach { jobs[it]?.cancel() }
+        connections.forEach {
+            it.broadcastMessage(Message.COMMIT)
+            listenJobs[it]?.cancel()
+        }
     }
 
     enum class State {

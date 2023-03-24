@@ -10,47 +10,43 @@ class ResourceManager {
         get() = _state
 
     private var transactionManagerConnection: Connection? = null
-    private var listenJob: Job? = null
 
     @OptIn(DelicateCoroutinesApi::class)
     suspend fun connectTransactionManager(connection: Connection) {
         transactionManagerConnection = connection
-        _state = State.WORKING
-        transactionManagerConnection?.broadcastState(state)
-        listenJob = GlobalScope.launch {
-            try {
-                connection.transactionManagerMessage.collect { msg ->
-                    when (msg) {
-                        TransactionManager.Message.PREPARE -> prepare()
-                        TransactionManager.Message.COMMIT -> commit()
-                        TransactionManager.Message.ABORT -> abort()
+        setState(State.WORKING)
+        GlobalScope.launch {
+            connection.transactionManagerMessage.collect { msg ->
+                when (msg) {
+                    TransactionManager.Message.PREPARE -> prepare()
+                    TransactionManager.Message.COMMIT -> {
+                        commit()
+                        return@collect
+                    }
+                    TransactionManager.Message.ABORT -> {
+                        abort()
+                        return@collect
                     }
                 }
-            } finally {
-                listenJob?.cancel()
             }
         }
     }
 
     suspend fun prepare() {
-        if (_state == State.WORKING) {
-            _state = State.PREPARED
-            transactionManagerConnection?.broadcastState(state)
-        }
+        if (_state == State.WORKING) setState(State.PREPARED)
     }
 
     suspend fun abort() {
-        if (_state == State.WORKING || _state == State.PREPARED) {
-            _state = State.ABORTED
-            transactionManagerConnection?.broadcastState(state)
-            listenJob?.cancel()
-        }
+        if (_state == State.WORKING || _state == State.PREPARED) setState(State.ABORTED)
     }
 
     private suspend fun commit() {
-        _state = State.COMMITTED
+        setState(State.COMMITTED)
+    }
+
+    private suspend fun setState(state: State) {
+        _state = state
         transactionManagerConnection?.broadcastState(state)
-        listenJob?.cancel()
     }
 
     enum class State {
